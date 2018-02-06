@@ -2,8 +2,7 @@ import numpy as np
 import numpy.testing as npt
 import unittest
 from bayesian_regression.util.sim import (
-    chain_interactions, ols, random_linkage,
-    random_species_tree, brownian_tree
+    chain_interactions, ols
 )
 from sklearn.utils import check_random_state
 

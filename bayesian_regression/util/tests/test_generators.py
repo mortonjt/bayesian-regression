@@ -38,9 +38,8 @@ class TestGenerator(unittest.TestCase):
         exp_beta = np.array(
             [[-0.48699685, -0.51737237, -0.70588861, -0.59306809, -0.6546415 ]]
         )
-        exp_theta = np.array(
-            [-1.76471591, 0.09173837, 1.11383944, 0.95193505, 0.30415688]
-        )
+        exp_theta = np.array([-4.764716, -2.908262, -1.886161,
+                              -2.048065, -2.695843])
         exp_gamma = np.array(
             [[3.1040167, 2.59893833, 4.4744781, 4.35601705, 4.91757565]]
         )
@@ -48,8 +47,8 @@ class TestGenerator(unittest.TestCase):
         self.assertEqual(exp_table, res_table)
         pdt.assert_frame_equal(exp_md, res_md)
         pdt.assert_frame_equal(exp_fmd, res_fmd)
-        npt.assert_allclose(exp_beta, res_beta, atol=1e-7)
-        npt.assert_allclose(exp_theta, res_theta, atol=1e-7)
+        npt.assert_allclose(exp_beta, res_beta, atol=1e-6)
+        npt.assert_allclose(exp_theta, res_theta, atol=1e-6)
 
     def test_block_table(self):
         res = block_table(6, 8)
@@ -80,8 +79,8 @@ class TestGenerator(unittest.TestCase):
                               index=samp_ids)
         exp_beta = np.array([[0.48220975, 0.04219932, -0.51668982,
                               1.55558875, 2.56861688, 1.27868026, 1.6225236]])
-        exp_theta = np.array([0.50094173, 2.40521398, 3.48880514,
-                              2.10665223, -1.66846398, -5.71559097])
+        exp_theta = np.array([ -5.499058,  -3.594786,  -2.511195,
+                               -3.893348,  -7.668464, -11.715591])
         exp_gamma = np.array([[-3.25737809, 0.08819684, 3.63515226,
                                -7.62944273, -12.13872507, -7.21789007,
                                -8.07587006]])
@@ -89,8 +88,8 @@ class TestGenerator(unittest.TestCase):
         self.assertEqual(exp_table, res_table)
         pdt.assert_frame_equal(exp_md, res_md)
         pdt.assert_frame_equal(exp_fmd, res_fmd)
-        npt.assert_allclose(exp_beta, res_beta, atol=1e-7)
-        npt.assert_allclose(exp_theta, res_theta, atol=1e-7)
+        npt.assert_allclose(exp_beta, res_beta, atol=1e-6)
+        npt.assert_allclose(exp_theta, res_theta, atol=1e-6)
 
 
 if __name__ == "__main__":

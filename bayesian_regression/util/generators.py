@@ -207,12 +207,12 @@ def _subsample_table(table, tree, gradient, alpha, feature_bias, seed=0):
     Ys = np.vstack([state.multivariate_normal(y[i, :], Sigma)
                     for i in range(y.shape[0])])
     Yp = Ys @ basis
-    theta = -np.log(np.exp(Yp).sum(axis=1)) + alpha
+    theta = -np.log(np.exp(Yp).sum(axis=1))
     # multinomial sample the entries
     #table = np.vstack(multinomial(nd, Yp[i, :]) for i in range(y.shape[0]))
 
     # poisson sample the entries
-    table = np.vstack(state.poisson(np.exp(Yp[i, :] + theta[i]))
+    table = np.vstack(state.poisson(np.exp(Yp[i, :] + theta[i] + alpha))
                       for i in range(y.shape[0])).T
 
     table = Table(table, feat_ids, samp_ids)
