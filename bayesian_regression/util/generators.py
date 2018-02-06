@@ -9,65 +9,13 @@ from gneiss.util import match_tips
 from biom import Table
 import pandas as pd
 import numpy as np
-
-
-def phylogenetic_table(tree, num_samples, spread, alpha=5, link=None, seed=0):
-    """ Generates a simulated table of counts accounting for
-    Brownian evolution.
-
-    This generates a table of species counts, where the
-    species abundances are generated from Gaussian
-    distribution.  The means of the Gaussians are
-    specified by Brownian evolution.
-
-    The counts are then simulated using a Poisson distribution.
-
-    Parameters
-    ----------
-    tree : skbio.TreeNode
-       Evolutionary tree generated from brownian evolution.
-    num_samples : int
-       Number of samples
-    spread : float
-       Width of species unimodal distribution.
-    link : callable
-       Link function for transforming the species means.
-       If it isn't specified, the identity function will
-       be used.
-
-    Returns
-    -------
-    table : biom.Table
-        Biom representation of the count table.
-    metadata : pd.DataFrame
-        DataFrame containing relevant metadata.
-    beta : np.array
-        Regression parameter estimates.
-    theta : np.array
-        Bias per sample.
-    gamma : np.array
-        Bias per feature
-
-    Notes
-    -----
-    This assumes that there is a phenotype vector
-    within every node in the tree
-    """
-    if link is None:
-        link = lambda x: x
-    state = check_random_state(seed)
-    mu = np.array([link(n.phenotype[-1]) for n in tree.tips()])
-    sigma = np.array([spread] * len(mu))
-    gradient = np.linspace(min(mu), max(mu), num_samples)
-    table = chain_interactions(gradient, mu, sigma)
-    n_species = len(list(tree.tips()))
-    table = table[:, np.argsort(mu)]
-    return _subsample_table(table, tree, gradient, alpha, state)
+from scipy.special import expit as sigmoid
 
 
 def band_table(num_samples, num_features, tree=None,
-               low=2, high=10, sigma=2, alpha=6, seed=0):
-    """ Generates a simulated table of counts.
+               mu=5, sigma=2, low=2, high=10,
+               spread=2, feature_bias=1, alpha=2, seed=0):
+    """ Generates a simulated band table of counts.
 
     Each organism is modeled as a Gaussian distribution.
     The means of the Gaussian are uniformly distributed
@@ -84,12 +32,95 @@ def band_table(num_samples, num_features, tree=None,
     tree : skbio.TreeNode
         Tree used as a scaffold for the ilr transform.
         If None, then the gram_schmidt_basis will be used.
+    mu : float
+        Random effects distribution of the means of the species.
+    sigma : float
+        Variance of the random effects distribution.
     low : float
         Smallest gradient value.
     high : float
         Largest gradient value.
-    sigma : float
+    spread : float
         Variance of each species distribution
+    feature_bias : float
+        Parameter for exponential distribution for feature biases.
+    alpha : int
+        Global count bias.  This bias is added to every cell in the matrix.
+    seed : int or np.random.RandomState
+        Random seed
+
+    Returns
+    -------
+    table : biom.Table
+        Biom representation of the count table.
+    metadata : pd.DataFrame
+        DataFrame containing relevant sample metadata.
+    feature metadata : pd.DataFrame
+        DataFrame containing relevant feature metadata.
+    beta : np.array
+        Regression parameter estimates.
+    theta : np.array
+        Bias per sample.
+    gamma : np.array
+        Bias per feature
+    """
+    state = check_random_state(seed)
+
+    # measured gradient values for each sample
+    gradient = np.linspace(low, high, num_samples)
+    # optima for features (i.e. optimal ph for species)
+    mus = state.normal(mu, sigma, num_features)
+    mus = np.sort(mus)
+    spread = np.array([spread] * num_features)
+    # construct species distributions
+    table = chain_interactions(gradient, mus, spread)
+    ans = _subsample_table(table, tree, gradient,
+                           alpha, feature_bias, state)
+    table, metadata, beta, theta, gamma = ans
+
+    feature_metadata = pd.DataFrame(
+        {
+            'mu': mus,
+        }, index=table.ids(axis='observation')
+    )
+
+    return table, metadata, feature_metadata, beta, theta, gamma
+
+
+def block_table(num_samples, num_features,
+                mu_num=6, mu_denom=4, sigma=0.5, pi=0.5,
+                low=2, high=10, spread=1, feature_bias=1,
+                alpha=6, seed=0):
+    """ Generates a simulated block table of counts.
+
+    Each organism is modeled as a Gaussian distribution.
+    The means of the Gaussian are uniformly distributed
+    between `low` and `high`.
+
+    The counts are then simulated using a Poisson distribution.
+
+    Parameters
+    ----------
+    num_samples : int
+        Number of samples to simulate
+    num_features : int
+        Number of features to simulate
+    mu_num : float
+        Random effects distribution of the means of the numerator species.
+    mu_denom : float
+        Random effects distribution of the means of the denominator species.
+    sigma : float
+        Standard deviation of both random effects distributions.
+    pi : float
+        Proportion of features in the numerator distribution.
+    low : float
+        Smallest gradient value.
+    high : float
+        Largest gradient value.
+    spread : float
+        Variance of each species distribution
+    feature_bias : float
+        Parameter for exponential distribution for feature biases.
     alpha : int
         Global count bias.  This bias is added to every cell in the matrix.
     seed : int or np.random.RandomState
@@ -109,23 +140,40 @@ def band_table(num_samples, num_features, tree=None,
         Bias per feature
     """
     state = check_random_state(seed)
-
     # measured gradient values for each sample
     gradient = np.linspace(low, high, num_samples)
     # optima for features (i.e. optimal ph for species)
-    mu = np.linspace(low, high, num_features)
-    sigma = np.array([sigma] * num_features)
+    #mu = np.linspace(low, high, num_features)
+    mu_num_hat = state.normal(
+        mu_num, sigma, size=round(pi * num_features))
+    mu_denom_hat = state.normal(
+        mu_denom, sigma, size=round((1-pi) * num_features))
+    # TODO: Need to save the numerator and denominator features
+    mu = np.hstack((mu_num_hat, mu_denom_hat))
+    spread = np.array([spread] * num_features)
     # construct species distributions
-    table = chain_interactions(gradient, mu, sigma)
-    return _subsample_table(table, tree, gradient, alpha, state)
+    table = chain_interactions(gradient, mu, spread)
+    ans = _subsample_table(
+        table, None, gradient=gradient,
+        feature_bias=feature_bias, alpha=alpha, seed=state)
+
+    table, metadata, beta, theta, gamma = ans
+    mid = (mu_num + mu_denom) / 2
+    metadata['G'] = np.round(sigmoid(gradient - mid))
+    feature_metadata = pd.DataFrame(
+        {
+            'mu': mu,
+            'class': [1] * len(mu_num_hat) + [-1] * len(mu_denom_hat)
+        }, index=table.ids(axis='observation')
+    )
+    return table, metadata, feature_metadata, beta, theta, gamma
 
 
-def _subsample_table(table, tree, gradient, alpha, seed=0):
-    # TODO: Add in option for specifying sample biases
-    # this will be especially important for simulation rarefaction.
+def _subsample_table(table, tree, gradient, alpha, feature_bias, seed=0):
     state = check_random_state(seed)
     # obtain basis required to convert from balances to proportions.
     num_samples, num_features = table.shape
+    dgamma = state.normal(0, feature_bias, size=num_features-1).reshape(1, -1)
     samp_ids = ['S%d' % i for i in range(num_samples)]
     feat_ids = ['F%d' % i for i in range(num_features)]
     table = pd.DataFrame(table, index=samp_ids, columns=feat_ids)
@@ -141,8 +189,9 @@ def _subsample_table(table, tree, gradient, alpha, seed=0):
     X = gradient.reshape(-1, 1)
     X = np.hstack((np.ones(len(X)).reshape(-1, 1), X.reshape(-1, 1)))
     pY, resid, B = ols(Y, X)
-    gamma = B[0]
+    gamma = B[0] + dgamma
     beta = B[1].reshape(1, -1)
+    B = np.vstack((gamma, beta))
     # parameter estimates
     r = beta.shape[1]
     # Normal distribution to simulate linear regression
@@ -154,13 +203,11 @@ def _subsample_table(table, tree, gradient, alpha, seed=0):
     sim_L = (v @ np.diag(w)).T
 
     # sample
-    y = X.dot(B)
+    y = X @ B
     Ys = np.vstack([state.multivariate_normal(y[i, :], Sigma)
                     for i in range(y.shape[0])])
     Yp = Ys @ basis
-    # calculate bias terms
     theta = -np.log(np.exp(Yp).sum(axis=1)) + alpha
-
     # multinomial sample the entries
     #table = np.vstack(multinomial(nd, Yp[i, :]) for i in range(y.shape[0]))
 
