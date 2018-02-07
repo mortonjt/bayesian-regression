@@ -7,9 +7,41 @@ from scipy.stats import norm, invwishart
 from scipy.sparse.linalg import eigsh
 from gneiss.util import match_tips
 from biom import Table
+from biom.util import biom_open
 import pandas as pd
 import numpy as np
 from scipy.special import expit as sigmoid
+
+
+def deposit(table, metadata, feature_metadata, it, rep, output_dir):
+    """ Writes down tables, metadata and feature metadata into files.
+
+    Parameters
+    ----------
+    table : biom.Table
+        Biom table
+    metadata : pd.DataFrame
+        Dataframe of sample metadata
+    feature_metadata : pd.DataFrame
+        Dataframe of features metadata
+    it : int
+        iteration number
+    rep : int
+        repetition number
+    output_dir : str
+        output directory
+    """
+    choice = 'abcdefghijklmnopqrstuvwxyz'
+    output_table = "%s/table.%d_%s.biom" % (
+        output_dir, it, choice[rep])
+    output_md = "%s/metadata.%d_%s.txt" % (
+        output_dir, it, choice[rep])
+    output_fmd = "%s/truth.%d_%s.txt" % (
+        output_dir, it, choice[rep])
+    with biom_open(output_table, 'w') as f:
+        table.to_hdf5(f, generated_by='moi')
+    metadata.to_csv(output_md, sep='\t')
+    feature_metadata.to_csv(output_fmd, sep='\t')
 
 
 def band_table(num_samples, num_features, tree=None,
@@ -88,9 +120,9 @@ def band_table(num_samples, num_features, tree=None,
 
 
 def block_table(num_samples, num_features,
-                mu_num=6, mu_denom=4, sigma=0.5, pi=0.5,
-                low=2, high=10, spread=1, feature_bias=1,
-                alpha=6, seed=0):
+                mu_num=6, mu_null=5, mu_denom=4, sigma=0.5,
+                pi1=0.25, pi2=0.25, low=4, high=6,
+                spread=1, feature_bias=1, alpha=6, seed=0):
     """ Generates a simulated block table of counts.
 
     Each organism is modeled as a Gaussian distribution.
@@ -107,12 +139,17 @@ def block_table(num_samples, num_features,
         Number of features to simulate
     mu_num : float
         Random effects distribution of the means of the numerator species.
+    mu_null : float
+        Random effects distribution of the means of the null species.
+        These species don't have a preference for either environment
     mu_denom : float
         Random effects distribution of the means of the denominator species.
     sigma : float
         Standard deviation of both random effects distributions.
-    pi : float
+    pi1 : float
         Proportion of features in the numerator distribution.
+    pi2 : float
+        Proportion of features in the denominator distribution.
     low : float
         Smallest gradient value.
     high : float
@@ -145,11 +182,14 @@ def block_table(num_samples, num_features,
     # optima for features (i.e. optimal ph for species)
     #mu = np.linspace(low, high, num_features)
     mu_num_hat = state.normal(
-        mu_num, sigma, size=round(pi * num_features))
+        mu_num, sigma, size=round(pi1 * num_features))
     mu_denom_hat = state.normal(
-        mu_denom, sigma, size=round((1-pi) * num_features))
+        mu_denom, sigma, size=round((pi2) * num_features))
+    mu_null_hat = state.normal(
+        mu_null, sigma, size=round((1-pi1-pi2) * num_features))
+
     # TODO: Need to save the numerator and denominator features
-    mu = np.hstack((mu_num_hat, mu_denom_hat))
+    mu = np.hstack((mu_num_hat, mu_null_hat, mu_denom_hat))
     spread = np.array([spread] * num_features)
     # construct species distributions
     table = chain_interactions(gradient, mu, spread)
@@ -163,7 +203,9 @@ def block_table(num_samples, num_features,
     feature_metadata = pd.DataFrame(
         {
             'mu': mu,
-            'class': [1] * len(mu_num_hat) + [-1] * len(mu_denom_hat)
+            'class': ([1] * len(mu_num_hat) +
+                      [0] * len(mu_null_hat) +
+                      [-1] * len(mu_denom_hat))
         }, index=table.ids(axis='observation')
     )
     return table, metadata, feature_metadata, beta, theta, gamma
@@ -218,4 +260,3 @@ def _subsample_table(table, tree, gradient, alpha, feature_bias, seed=0):
     table = Table(table, feat_ids, samp_ids)
     metadata = pd.DataFrame({'G': gradient}, index=samp_ids)
     return table, metadata, beta, theta, gamma
-
