@@ -40,7 +40,7 @@ def deposit(table, metadata, feature_metadata, it, rep, output_dir):
         output_dir, it, choice[rep])
     with biom_open(output_table, 'w') as f:
         table.to_hdf5(f, generated_by='moi')
-    metadata.to_csv(output_md, sep='\t')
+    metadata.to_csv(output_md, sep='\t', index_label='#SampleID')
     feature_metadata.to_csv(output_fmd, sep='\t')
 
 
