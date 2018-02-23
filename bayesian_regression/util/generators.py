@@ -182,11 +182,11 @@ def block_table(num_samples, num_features,
     # optima for features (i.e. optimal ph for species)
     #mu = np.linspace(low, high, num_features)
     mu_num_hat = state.normal(
-        mu_num, sigma, size=round(pi1 * num_features))
+        mu_num, sigma, size=int(round(pi1 * num_features)))
     mu_denom_hat = state.normal(
-        mu_denom, sigma, size=round((pi2) * num_features))
+        mu_denom, sigma, size=int(round((pi2) * num_features)))
     mu_null_hat = state.normal(
-        mu_null, sigma, size=round((1-pi1-pi2) * num_features))
+        mu_null, sigma, size=int(round((1-pi1-pi2) * num_features)))
 
     # TODO: Need to save the numerator and denominator features
     mu = np.hstack((mu_num_hat, mu_null_hat, mu_denom_hat))
