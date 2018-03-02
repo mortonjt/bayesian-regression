@@ -46,7 +46,9 @@ def deposit(table, metadata, feature_metadata, it, rep, output_dir):
 
 def band_table(num_samples, num_features, tree=None,
                mu=5, sigma=2, low=2, high=10,
-               spread=2, feature_bias=1, alpha=2, seed=0):
+               spread=2, feature_bias=1, alpha=2,
+               dispersion_shape=5, dispersion_rate=0.1,
+               seed=0):
     """ Generates a simulated band table of counts.
 
     Each organism is modeled as a Gaussian distribution.
@@ -78,6 +80,10 @@ def band_table(num_samples, num_features, tree=None,
         Parameter for exponential distribution for feature biases.
     alpha : int
         Global count bias.  This bias is added to every cell in the matrix.
+    dispersion_shape : float
+        Shape parameter of gamma prior for dispersion parameter.
+    dispersion_rate : float
+        Rate parameter of gamma prior for dispersion parameter.
     seed : int or np.random.RandomState
         Random seed
 
@@ -95,6 +101,8 @@ def band_table(num_samples, num_features, tree=None,
         Bias per sample.
     gamma : np.array
         Bias per feature
+    dispersion : np.array
+        Dispersion rates of counts per sample.
     """
     state = check_random_state(seed)
 
@@ -107,8 +115,11 @@ def band_table(num_samples, num_features, tree=None,
     # construct species distributions
     table = chain_interactions(gradient, mus, spread)
     ans = _subsample_table(table, tree, gradient,
-                           alpha, feature_bias, state)
-    table, metadata, beta, theta, gamma = ans
+                           alpha=alpha, feature_bias=feature_bias,
+                           dispersion_shape=dispersion_shape,
+                           dispersion_rate=dispersion_rate,
+                           seed=state)
+    table, metadata, beta, theta, gamma, dispersion = ans
 
     feature_metadata = pd.DataFrame(
         {
@@ -116,13 +127,15 @@ def band_table(num_samples, num_features, tree=None,
         }, index=table.ids(axis='observation')
     )
 
-    return table, metadata, feature_metadata, beta, theta, gamma
+    return table, metadata, feature_metadata, beta, theta, gamma, dispersion
 
 
 def block_table(num_samples, num_features,
                 mu_num=6, mu_null=5, mu_denom=4, sigma=0.5,
                 pi1=0.25, pi2=0.25, low=4, high=6,
-                spread=1, feature_bias=1, alpha=6, seed=0):
+                spread=1, feature_bias=1, alpha=6,
+                dispersion_shape=5, dispersion_rate=0.1,
+                seed=0):
     """ Generates a simulated block table of counts.
 
     Each organism is modeled as a Gaussian distribution.
@@ -160,6 +173,10 @@ def block_table(num_samples, num_features,
         Parameter for exponential distribution for feature biases.
     alpha : int
         Global count bias.  This bias is added to every cell in the matrix.
+    dispersion_shape : float
+        Shape parameter of gamma prior for dispersion parameter.
+    dispersion_rate : float
+        Rate parameter of gamma prior for dispersion parameter.
     seed : int or np.random.RandomState
         Random seed
 
@@ -175,6 +192,8 @@ def block_table(num_samples, num_features,
         Bias per sample.
     gamma : np.array
         Bias per feature
+    dispersion : np.array
+        Dispersion rates of counts per sample.
     """
     state = check_random_state(seed)
     # measured gradient values for each sample
@@ -188,16 +207,18 @@ def block_table(num_samples, num_features,
     mu_null_hat = state.normal(
         mu_null, sigma, size=int(round((1-pi1-pi2) * num_features)))
 
-    # TODO: Need to save the numerator and denominator features
     mu = np.hstack((mu_num_hat, mu_null_hat, mu_denom_hat))
     spread = np.array([spread] * num_features)
     # construct species distributions
     table = chain_interactions(gradient, mu, spread)
     ans = _subsample_table(
         table, None, gradient=gradient,
-        feature_bias=feature_bias, alpha=alpha, seed=state)
+        feature_bias=feature_bias, alpha=alpha,
+        dispersion_shape=dispersion_shape,
+        dispersion_rate=dispersion_rate,
+        seed=state)
 
-    table, metadata, beta, theta, gamma = ans
+    table, metadata, beta, theta, gamma, dispersion = ans
     mid = (mu_num + mu_denom) / 2
     metadata['G'] = np.round(sigmoid(gradient - mid))
     feature_metadata = pd.DataFrame(
@@ -208,14 +229,18 @@ def block_table(num_samples, num_features,
                       [-1] * len(mu_denom_hat))
         }, index=table.ids(axis='observation')
     )
-    return table, metadata, feature_metadata, beta, theta, gamma
+    return table, metadata, feature_metadata, beta, theta, gamma, dispersion
 
 
-def _subsample_table(table, tree, gradient, alpha, feature_bias, seed=0):
+def _subsample_table(table, tree, gradient, alpha, feature_bias,
+                     dispersion_shape, dispersion_rate, seed=0):
     state = check_random_state(seed)
     # obtain basis required to convert from balances to proportions.
     num_samples, num_features = table.shape
-    dgamma = state.normal(0, feature_bias, size=num_features-1).reshape(1, -1)
+    dgamma = state.normal(0, feature_bias,
+                          size=num_features-1).reshape(1, -1)
+    dispersion = state.gamma(dispersion_shape, dispersion_rate,
+                             size=num_samples)
     samp_ids = ['S%d' % i for i in range(num_samples)]
     feat_ids = ['F%d' % i for i in range(num_features)]
     table = pd.DataFrame(table, index=samp_ids, columns=feat_ids)
@@ -253,10 +278,18 @@ def _subsample_table(table, tree, gradient, alpha, feature_bias, seed=0):
     # multinomial sample the entries
     #table = np.vstack(multinomial(nd, Yp[i, :]) for i in range(y.shape[0]))
 
-    # poisson sample the entries
-    table = np.vstack(state.poisson(np.exp(Yp[i, :] + theta[i] + alpha))
-                      for i in range(y.shape[0])).T
+    # poisson sample the entries with overdispersion
+    mu = np.vstack(
+        np.exp(Yp[i, :] + theta[i] + alpha)
+        for i in range(y.shape[0])
+    )
+
+    table = np.vstack(
+        state.poisson(
+            state.gamma(dispersion[i], dispersion[i] * mu[i, :]))
+        for i in range(y.shape[0])
+    ).T
 
     table = Table(table, feat_ids, samp_ids)
     metadata = pd.DataFrame({'G': gradient}, index=samp_ids)
-    return table, metadata, beta, theta, gamma
+    return table, metadata, beta, theta, gamma, dispersion
