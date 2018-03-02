@@ -18,7 +18,7 @@ before_install:
 install:
   - conda create --yes -n test_env python=$PYVERSION
   - source activate test_env
-  - conda install --yes -c biocore scipy numpy pandas scikit-learn scikit-bio click biom-format nose matplotlib seaborn nose ipython cython edward tensorflow
+  - conda install --yes -c biocore scipy numpy pandas scikit-learn scikit-bio click biom-format nose matplotlib seaborn nose ipython cython tensorflow
   - conda install --yes -c conda-forge tensorflow pip
   - pip install edward
   - python setup.py install
