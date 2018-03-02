@@ -5,7 +5,6 @@ from skbio.stats.composition import _gram_schmidt_basis, ilr, clr_inv
 from sklearn.utils import check_random_state
 from scipy.stats import norm, invwishart
 from scipy.sparse.linalg import eigsh
-from gneiss.util import match_tips
 from biom import Table
 from biom.util import biom_open
 import pandas as pd
@@ -259,21 +258,10 @@ def _subsample_table(table, tree, gradient, alpha, feature_bias,
     gamma = B[0] + dgamma
     beta = B[1].reshape(1, -1)
     B = np.vstack((gamma, beta))
-    # parameter estimates
-    r = beta.shape[1]
-    # Normal distribution to simulate linear regression
-    M = np.eye(r)
-    # Generate covariance matrix from inverse wishart
-    Sigma = invwishart.rvs(df=r+2, scale=M.dot(M.T), random_state=state)
-    w, v = eigsh(Sigma, k=2)
-    # Low rank covariance matrix
-    sim_L = (v @ np.diag(w)).T
 
     # sample
     y = X @ B
-    Ys = np.vstack([state.multivariate_normal(y[i, :], Sigma)
-                    for i in range(y.shape[0])])
-    Yp = Ys @ basis
+    Yp = y @ basis
     theta = -np.log(np.exp(Yp).sum(axis=1))
     # multinomial sample the entries
     #table = np.vstack(multinomial(nd, Yp[i, :]) for i in range(y.shape[0]))
