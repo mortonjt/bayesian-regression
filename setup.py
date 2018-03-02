@@ -54,7 +54,6 @@ setup(name='bayesian-regression',
       scripts=glob('bayesian_regression/scripts/*.py'),
       setup_requires=['numpy >= 1.9.2'],
       ext_modules=extensions,
-      cmdclass={'build_ext': build_ext},
       install_requires=[
           'IPython >= 3.2.0',
           'matplotlib >= 1.4.3',
