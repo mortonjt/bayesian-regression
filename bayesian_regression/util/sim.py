@@ -15,7 +15,7 @@ from gneiss.cluster import rank_linkage
 from biom import Table
 
 
-def chain_interactions(gradient, mu, sigma):
+def chain_interactions(gradient, mu, sigma, gamma=None):
     """
     This generates an urn simulating a chain of interacting species.
 
@@ -30,6 +30,8 @@ def chain_interactions(gradient, mu, sigma):
        Vector of means.
     sigma: array_like
        Vector of standard deviations.
+    gamma : array_like
+       Vector of feature biases.
 
     Returns
     -------
@@ -39,7 +41,9 @@ def chain_interactions(gradient, mu, sigma):
        to the number of samples along the `gradient` and `m`
        corresponds to the number of species in `mus`.
     """
-    xs = [norm.pdf(gradient, loc=mu[i], scale=sigma[i])
+    if gamma is None:
+        gamma = np.array([1] * len(mu))
+    xs = [norm.pdf(gradient, loc=mu[i], scale=sigma[i]) * gamma[i]
           for i in range(len(mu))]
     return np.vstack(xs).T
 

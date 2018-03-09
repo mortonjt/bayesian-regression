@@ -10,6 +10,7 @@ from biom.util import biom_open
 import pandas as pd
 import numpy as np
 from scipy.special import expit as sigmoid
+from scipy.sparse import coo_matrix
 
 
 def deposit(table, metadata, feature_metadata, it, rep, output_dir):
@@ -41,6 +42,112 @@ def deposit(table, metadata, feature_metadata, it, rep, output_dir):
         table.to_hdf5(f, generated_by='moi')
     metadata.to_csv(output_md, sep='\t', index_label='#SampleID')
     feature_metadata.to_csv(output_fmd, sep='\t')
+
+def softplus(x):
+    return np.log(1 + np.exp(x))
+
+def random_poisson_model(num_samples, num_features,
+                         tree=None,
+                         low=2, high=10,
+                         alpha_mean=0,
+                         alpha_scale=5,
+                         theta_mean=0,
+                         theta_scale=5,
+                         gamma_mean=0,
+                         gamma_scale=5,
+                         kappa_mean=0,
+                         kappa_scale=5,
+                         beta_mean=0,
+                         beta_scale=5,
+                         seed=0):
+    """ Generates a table using a random poisson regression model.
+
+    Parameters
+    ----------
+    num_samples : int
+        Number of samples
+    num_features : int
+        Number of features
+    basis : np.array
+        Orthonormal contrast matrix.
+    low : float
+        Smallest gradient value.
+    high : float
+        Largest gradient value.
+    alpha_mean : float
+        Mean of alpha prior  (for global bias)
+    alpha_scale: float
+        Scale of alpha prior  (for global bias)
+    theta_mean : float
+        Mean of theta prior (for sample bias)
+    theta_scale=5
+        Scale of theta prior (for sample bias)
+    gamma_mean : float
+        Mean of gamma prior (for feature bias)
+    gamma_scale=5
+        Scale of gamma prior (for feature bias)
+    kappa_mean : float
+        Mean of kappa prior (for overdispersion)
+    kappa_scale=5
+        Scale of kappa prior (for overdispersion)
+    beta_mean : float
+        Mean of beta prior (for regression coefficients)
+    beta_scale=5
+        Scale of beta prior (for regression coefficients)
+
+    Returns
+    -------
+    table : biom.Table
+        Biom representation of the count table.
+    metadata : pd.DataFrame
+        DataFrame containing relevant metadata.
+    beta : np.array
+        Regression parameter estimates.
+    theta : np.array
+        Bias per sample.
+    gamma : np.array
+        Bias per feature
+    kappa : np.array
+        Dispersion rates of counts per sample.
+    """
+    # generate all of the coefficient using the random poisson model
+    state = check_random_state(seed)
+    alpha = state.normal(alpha_mean, alpha_scale)
+    theta = state.normal(theta_mean, theta_scale, size=(num_samples, 1))
+    beta = state.normal(beta_mean, beta_scale, size=num_features-1)
+    gamma = state.normal(gamma_mean, gamma_scale, size=num_features-1)
+    kappa = state.normal(kappa_mean, kappa_scale, size=num_features)
+
+    if tree is None:
+        basis = coo_matrix(_gram_schmidt_basis(num_features), dtype=np.float32)
+    else:
+        basis = sparse_balance_basis(tree)[0]
+
+    G = np.linspace(low, high, num_samples)
+    N, D = num_samples, num_features
+    G_data = np.vstack((np.ones(N), G)).T
+    B = np.vstack((gamma, beta))
+    V = G_data @ B @ basis + theta + alpha
+    #kprime = kappa @ basis
+
+    mu = np.vstack((state.normal(V[:, i] + alpha, softplus(kappa[i]))
+                    for i in range(num_features))).T
+    table = np.vstack(
+        state.poisson(np.exp(mu[i, :]))
+        for i in range(mu.shape[0])
+    ).T
+
+    samp_ids = ['S%d' % i for i in range(num_samples)]
+    feat_ids = ['F%d' % i for i in range(num_features)]
+    balance_ids = ['L%d' % i for i in range(num_features-1)]
+
+    table = Table(table, feat_ids, samp_ids)
+    metadata = pd.DataFrame({'G': G.ravel()}, index=samp_ids)
+    beta = pd.DataFrame({'beta': beta.ravel()}, index=balance_ids)
+    gamma = pd.DataFrame({'gamma': gamma.ravel()}, index=balance_ids)
+    kappa = pd.DataFrame({'kappa': kappa.ravel()}, index=feat_ids)
+    theta = pd.DataFrame({'theta': theta.ravel()}, index=samp_ids)
+    return table, metadata, basis, alpha, beta, theta, gamma, kappa
 
 
 def band_table(num_samples, num_features, tree=None,
@@ -112,7 +219,9 @@ def band_table(num_samples, num_features, tree=None,
     mus = np.sort(mus)
     spread = np.array([spread] * num_features)
     # construct species distributions
-    table = chain_interactions(gradient, mus, spread)
+    gamma = np.exp(state.normal(0, feature_bias,
+                                size=num_features))
+    table = chain_interactions(gradient, mus, spread, gamma)
     ans = _subsample_table(table, tree, gradient,
                            alpha=alpha, feature_bias=feature_bias,
                            dispersion_shape=dispersion_shape,
@@ -209,7 +318,9 @@ def block_table(num_samples, num_features,
     mu = np.hstack((mu_num_hat, mu_null_hat, mu_denom_hat))
     spread = np.array([spread] * num_features)
     # construct species distributions
-    table = chain_interactions(gradient, mu, spread)
+    gamma = state.normal(0, feature_bias,
+                         size=num_features)
+    table = chain_interactions(gradient, mu, spread, gamma)
     ans = _subsample_table(
         table, None, gradient=gradient,
         feature_bias=feature_bias, alpha=alpha,
@@ -236,8 +347,6 @@ def _subsample_table(table, tree, gradient, alpha, feature_bias,
     state = check_random_state(seed)
     # obtain basis required to convert from balances to proportions.
     num_samples, num_features = table.shape
-    dgamma = state.normal(0, feature_bias,
-                          size=num_features-1).reshape(1, -1)
     dispersion = state.gamma(dispersion_shape, dispersion_rate,
                              size=num_samples)
     samp_ids = ['S%d' % i for i in range(num_samples)]
@@ -255,7 +364,7 @@ def _subsample_table(table, tree, gradient, alpha, feature_bias,
     X = gradient.reshape(-1, 1)
     X = np.hstack((np.ones(len(X)).reshape(-1, 1), X.reshape(-1, 1)))
     pY, resid, B = ols(Y, X)
-    gamma = B[0] + dgamma
+    gamma = B[0] # + dgamma
     beta = B[1].reshape(1, -1)
     B = np.vstack((gamma, beta))
 
@@ -271,12 +380,17 @@ def _subsample_table(table, tree, gradient, alpha, feature_bias,
         np.exp(Yp[i, :] + theta[i] + alpha)
         for i in range(y.shape[0])
     )
-
     table = np.vstack(
-        state.poisson(
-            state.gamma(dispersion[i], dispersion[i] * mu[i, :]))
+        state.poisson(mu[i, :])
         for i in range(y.shape[0])
     ).T
+
+    # negative binomial sampling
+    # table = np.vstack(
+    #     state.poisson(
+    #         state.gamma(dispersion[i], dispersion[i] * mu[i, :]))
+    #     for i in range(y.shape[0])
+    # ).T
 
     table = Table(table, feat_ids, samp_ids)
     metadata = pd.DataFrame({'G': gradient}, index=samp_ids)
